@@ -27,6 +27,7 @@ type queueRequest struct {
 
 type fetcherServer struct {
 	queue chan *queueRequest
+	done  chan bool
 }
 
 func newQueueRequest(url string) *queueRequest {
@@ -46,11 +47,18 @@ func newFetcher() (*fetcherServer, error) {
 
 	fs := &fetcherServer{
 		queue: make(chan *queueRequest, 64),
+		done:  make(chan bool, Workers),
 	}
 	for i := 0; i < Workers; i++ {
 		go fs.worker()
 	}
 	return fs, nil
+}
+
+func (fs *fetcherServer) stop() {
+	for i := 0; i < Workers; i++ {
+		fs.done <- true
+	}
 }
 
 // GIN handler
@@ -115,7 +123,8 @@ func (fs *fetcherServer) do(urls []string) (*Response, error) {
 
 func (fs *fetcherServer) worker() {
 
-	for in := range fs.queue {
+	select {
+	case in := <-fs.queue:
 		// do the fetching
 		res, err := fs.work(in.req)
 		if err != nil {
@@ -130,6 +139,9 @@ func (fs *fetcherServer) worker() {
 		}
 
 		in.resp <- res
+
+	case <-fs.done:
+		return
 	}
 }
 

@@ -13,6 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer fetcher.stop()
 
 	r := gin.Default()
 	// register your routes in there
