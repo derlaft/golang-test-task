@@ -1,10 +1,10 @@
-FROM debian:sid-slim
+FROM alpine:latest
 
-RUN mkdir /service && apt-get update && apt-get -y install ca-certificates && rm -rf /var/cache/apt/*
+RUN mkdir /service && apk --no-cache add ca-certificates
 
 COPY ./bin/linkfetcher /service/linkfetcher
 
-RUN useradd server
+RUN adduser -S server
 
 USER server
 

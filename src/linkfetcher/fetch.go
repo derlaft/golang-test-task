@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,12 +56,7 @@ func (fs *fetcherServer) handle(c *gin.Context) {
 
 func (fs *fetcherServer) do(urls []string) (*Response, error) {
 
-	var (
-		result = Response(make([]*ResponseItem, len(urls)))
-		wg     sync.WaitGroup
-	)
-
-	wg.Add(len(result))
+	var result = make(chan *ResponseItem)
 
 	for i, param := range urls {
 		go func(id int, url string) {
@@ -81,25 +76,33 @@ func (fs *fetcherServer) do(urls []string) (*Response, error) {
 				}
 			}
 
-			// arrays are thread-safe until areas
-			// do not overlap
-			result[id] = res
+			result <- res
 
-			wg.Done()
 		}(i, param)
 	}
 
-	wg.Wait()
-	return &result, nil
+	var output = Response([]*ResponseItem{})
+	for item := range result {
+		output = append(output, item)
+	}
+
+	return &output, nil
 }
 
 func (fs *fetcherServer) work(url string) (*ResponseItem, error) {
 
 	// do GET with timeout
-	client := http.Client{
-		Timeout: RequestTimeout,
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
 	}
-	resp, err := client.Get(url)
+
+	ctx, cancel := context.WithTimeout(context.Background(), RequestTimeout)
+	defer cancel()
+
+	client := &http.Client{}
+
+	resp, err := client.Do(req.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -138,9 +141,11 @@ func (fs *fetcherServer) work(url string) (*ResponseItem, error) {
 	// count && fill-in tags
 	tags, err := countTags(body)
 	if err != nil {
-		return nil, err
+		// just HTML errors; ignore
+		log.Println("HTML parse error: %v", err)
+	} else {
+		result.Elements = tags
 	}
-	result.Elements = tags
 
 	return &result, nil
 }
