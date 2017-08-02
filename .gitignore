@@ -16,3 +16,4 @@
 vendor/pkg/
 vendor/src/
 pkg/
+bin/
