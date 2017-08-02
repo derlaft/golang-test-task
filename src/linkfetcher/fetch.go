@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,7 +57,12 @@ func (fs *fetcherServer) handle(c *gin.Context) {
 
 func (fs *fetcherServer) do(urls []string) (*Response, error) {
 
-	var result = make(chan *ResponseItem)
+	var (
+		result = make(chan *ResponseItem, len(urls))
+		wg     sync.WaitGroup
+	)
+
+	wg.Add(len(urls))
 
 	for i, param := range urls {
 		go func(id int, url string) {
@@ -77,9 +83,15 @@ func (fs *fetcherServer) do(urls []string) (*Response, error) {
 			}
 
 			result <- res
-
+			wg.Done()
 		}(i, param)
 	}
+
+	// close channel on completion
+	go func() {
+		wg.Wait()
+		close(result)
+	}()
 
 	var output = Response([]*ResponseItem{})
 	for item := range result {
