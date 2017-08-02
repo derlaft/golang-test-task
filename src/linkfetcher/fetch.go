@@ -17,15 +17,39 @@ import (
 
 const (
 	RequestTimeout = time.Second * 60
+	Workers        = 8
 )
 
+type queueRequest struct {
+	req  string
+	resp chan *ResponseItem
+}
+
 type fetcherServer struct {
+	queue chan *queueRequest
+}
+
+func newQueueRequest(url string) *queueRequest {
+	return &queueRequest{
+		req:  url,
+		resp: make(chan *ResponseItem),
+	}
+}
+
+func (r *queueRequest) do(fs *fetcherServer) *ResponseItem {
+	fs.queue <- r
+	return <-r.resp
 }
 
 // create new fetcher backend
 func newFetcher() (*fetcherServer, error) {
 
-	fs := &fetcherServer{}
+	fs := &fetcherServer{
+		queue: make(chan *queueRequest, 64),
+	}
+	for i := 0; i < Workers; i++ {
+		go fs.worker()
+	}
 	return fs, nil
 }
 
@@ -64,27 +88,15 @@ func (fs *fetcherServer) do(urls []string) (*Response, error) {
 
 	wg.Add(len(urls))
 
-	for i, param := range urls {
-		go func(id int, url string) {
-			// vars are passed as parameters to create
-			// copies from loop ones
+	for _, param := range urls {
+		go func(url string) {
+			// url is passed as a parameter to create
+			// a copy from the loop one
+			resp := newQueueRequest(url).do(fs)
+			result <- resp
 
-			// do the fetching
-			res, err := fs.work(url)
-			if err != nil {
-				// error feedback is wanted
-				res = &ResponseItem{
-					URL: url,
-					Meta: Meta{
-						Status: http.StatusInternalServerError,
-						Error:  err.Error(),
-					},
-				}
-			}
-
-			result <- res
 			wg.Done()
-		}(i, param)
+		}(param)
 	}
 
 	// close channel on completion
@@ -99,6 +111,26 @@ func (fs *fetcherServer) do(urls []string) (*Response, error) {
 	}
 
 	return &output, nil
+}
+
+func (fs *fetcherServer) worker() {
+
+	for in := range fs.queue {
+		// do the fetching
+		res, err := fs.work(in.req)
+		if err != nil {
+			// error feedback is wanted
+			res = &ResponseItem{
+				URL: in.req,
+				Meta: Meta{
+					Status: http.StatusInternalServerError,
+					Error:  err.Error(),
+				},
+			}
+		}
+
+		in.resp <- res
+	}
 }
 
 func (fs *fetcherServer) work(url string) (*ResponseItem, error) {
